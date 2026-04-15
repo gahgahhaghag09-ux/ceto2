@@ -1,8 +1,27 @@
 import { petalTypes } from "./petalData.js";
+import { mobTypes } from "./mobs.js";
 import { maps } from "./maps.js";
 let currentMap = "main";
 let dragging = null;
 let petals = [];
+let mobs = [];
+let spawnTimer = 0;
+let maxMobs = 50;
+let playerHitCooldown = 0;
+let player = {
+  x: 400,
+  y: 300,
+  vx: 0,
+  vy: 0,
+  hp: 200
+};
+let playerRadius = 18;
+function getSpawnRate() {
+  let base = 40;     // fastest spawn (~0.6s)
+  let growth = 3;    // how quickly it slows down
+
+  return base + mobs.length * growth;
+}
 function rebuildPetals() {
   petals = [];
 
@@ -32,9 +51,12 @@ let invButton = {
 
   let count = 0;
 
-  let map = maps?.[currentMap];
-  if (!map) return;
-  if (!map.tiles) map.tiles = {};
+  if (!maps[currentMap]) {
+  maps[currentMap] = { tiles: {} };
+}
+
+let map = maps[currentMap];
+if (!map.tiles) map.tiles = {};
 
   for (let x = startX; x <= endX; x++) {
     for (let y = startY; y <= endY; y++) {
@@ -42,13 +64,9 @@ let invButton = {
       count++;
     }
   }
-
-  console.log(`Filled ${count} tiles`);
 }
 let inventory = [
-  { type: "basic" },
-  { type: "rose" },
-  { type: "rice" }
+
 ];
 let equipped = [];
 let maxEquip = 5;
@@ -76,6 +94,8 @@ let mouse = {
   x: 0,
   y: 0
 };
+let mouseX = 0;
+let mouseY = 0;
 canvas.addEventListener("mouseup", e => {
   if (!dragging) return;
 
@@ -102,13 +122,18 @@ canvas.addEventListener("mouseup", e => {
   dragging = null;
 });
 canvas.addEventListener("mousedown", e => {
+  const rect = canvas.getBoundingClientRect();
+
+  let mx = e.clientX - rect.left;
+  let my = e.clientY - rect.top;
+
   for (let i = 0; i < inventory.length; i++) {
     let x = 20 + i * 60;
     let y = canvas.height - 80;
 
     if (
-      mouseX > x && mouseX < x + 50 &&
-      mouseY > y && mouseY < y + 50
+      mx > x && mx < x + 50 &&
+      my > y && my < y + 50
     ) {
       dragging = {
         type: inventory[i].type
@@ -120,11 +145,13 @@ canvas.addEventListener("mousedown", e => {
   }
 });
 canvas.addEventListener("mousemove", e => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
+  const rect = canvas.getBoundingClientRect();
 
-  mouseX = e.clientX;
-  mouseY = e.clientY;
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
+
+  mouseX = mouse.x;
+  mouseY = mouse.y;
 });
 
 fillRect(7,9,11,11); fillRect(9,8,11,7); fillRect(14,14,14,1); fillRect(14,-14,14,-1);
@@ -135,12 +162,6 @@ fillRect(15,15,15,-15); fillRect(-15,-15,15,-15); fillRect(-15,-15,-15,15); fill
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-let player = {
-  x: 400,
-  y: 300,
-  vx: 0,
-  vy: 0
-};
 canvas.addEventListener("click", e => {
   let mx = e.clientX;
   let my = e.clientY;
@@ -169,6 +190,22 @@ function isWall(x, y) {
 
   return mapObj[`${tx},${ty}`] === 1;
 }
+function isColliding(x, y) {
+  let r = playerRadius;
+
+  let points = [
+    [x - r, y],
+    [x + r, y],
+    [x, y - r],
+    [x, y + r]
+  ];
+
+  for (let p of points) {
+    if (isWall(p[0], p[1])) return true;
+  }
+
+  return false;
+}
 function getMapBounds() {
   const tiles = maps?.[currentMap]?.tiles;
   if (!tiles) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
@@ -191,7 +228,6 @@ function getMapBounds() {
 }
 
 function update() {
-    console.log(maps[currentMap]);
     let worldMouseX = mouse.x - (canvas.width / 2 - player.x);
 let worldMouseY = mouse.y - (canvas.height / 2 - player.y);
   let accel = 0.5;
@@ -202,61 +238,92 @@ let dy = worldMouseY - player.y;
 
 let dist = Math.hypot(dx, dy);
 
-let maxSpeed = 6;
+let maxSpeed = 4;
 let slowRadius = 150;
 
 let speed = Math.min(dist / slowRadius, 1) * maxSpeed;
-
-// target velocity
-let targetVx = 0;
-let targetVy = 0;
-
-if (dist > 3) {
-  targetVx = (dx / dist) * speed;
-  targetVy = (dy / dist) * speed;
+if (dist > 0) {
+  player.vx = (dx / dist) * speed;
+  player.vy = (dy / dist) * speed;
+} else {
+  player.vx = 0;
+  player.vy = 0;
 }
-
-// smooth movement (this fixes turning)
-let smooth = 0.5;
-
-player.vx += (targetVx - player.vx) * smooth;
-player.vy += (targetVy - player.vy) * smooth;
-
-  player.vx *= friction;
-  player.vy *= friction;
-
- let r = 20;
-
+let maxV = 1;
 let nextX = player.x + player.vx;
 let nextY = player.y + player.vy;
 
-// horizontal collision (check left + right edges)
-if (
-  !isWall(nextX + r, player.y) &&
-  !isWall(nextX - r, player.y)
-) {
+// X movement
+if (!isColliding(nextX, player.y)) {
   player.x = nextX;
 } else {
   player.vx = 0;
 }
 
-// vertical collision (check top + bottom edges)
-if (
-  !isWall(player.x, nextY + r) &&
-  !isWall(player.x, nextY - r)
-) {
+// Y movement
+if (!isColliding(player.x, nextY)) {
   player.y = nextY;
 } else {
   player.vy = 0;
 }
-for (let p of petals) {
-  p.angle += 0.05;
-}
-for (let p of petals) {
-  p.angle += 0.05;
-}
-}
+let bounds = getMapBounds();
+spawnTimer++;
 
+if (
+  mobs.length < maxMobs &&
+  spawnTimer >= getSpawnRate() &&
+  Math.random() < 0.8
+) {
+  spawnTimer = 0;
+
+  let tx, ty;
+  let tries = 0;
+  let valid = false;
+
+  while (tries < 20) {
+    tx = Math.floor(Math.random() * (bounds.maxX - bounds.minX + 1)) + bounds.minX;
+    ty = Math.floor(Math.random() * (bounds.maxY - bounds.minY + 1)) + bounds.minY;
+
+    if (maps[currentMap]?.tiles?.[`${tx},${ty}`] !== 1) {
+      valid = true;
+      break;
+    }
+
+    tries++;
+  }
+
+  if (!valid) return;
+
+  let stats = mobTypes["babyAnt"];
+
+  mobs.push({
+    type: "babyAnt",
+    x: tx * tileSize + tileSize / 2,
+    y: ty * tileSize + tileSize / 2,
+    vx: 0,
+    vy: 0,
+    hp: stats.hp,
+    damage: stats.damage,
+    speed: stats.speed,
+    r: stats.r
+  });
+}
+if (playerHitCooldown > 0) playerHitCooldown--;
+
+for (let m of mobs) {
+  let dx = player.x - m.x;
+  let dy = player.y - m.y;
+  let dist = Math.hypot(dx, dy);
+
+  if (dist < m.r + 20 && playerHitCooldown === 0) {
+    player.hp -= m.damage;
+    playerHitCooldown = 30;
+  }
+}
+for (let p of petals) {
+  p.angle += 0.05;
+}
+}
 function draw() {
     invButton.y = canvas.height - invButton.h - 20;
   ctx.fillStyle = "#050505";
@@ -283,6 +350,15 @@ for (let key in tiles) {
       tileSize
     );
   }
+}
+for (let m of mobs) {
+  if (m.type === "babyAnt") {
+    ctx.fillStyle = "grey"; // brown
+  }
+
+  ctx.beginPath();
+  ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+  ctx.fill();
 }
   // player
 let r = 20;
@@ -430,4 +506,3 @@ function gameLoop() {
 }
 
 gameLoop(); 
-
