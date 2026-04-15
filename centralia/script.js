@@ -1,7 +1,23 @@
 import { petalTypes } from "./petalData.js";
 import { maps } from "./maps.js";
 let currentMap = "main";
+let dragging = null;
 let petals = [];
+function rebuildPetals() {
+  petals = [];
+
+  let i = 0;
+  for (let s of slots) {
+    if (s.petal) {
+      petals.push({
+        type: s.petal.type,
+        angle: (i / maxEquip) * Math.PI * 2, // spread evenly
+        dist: 60
+      });
+      i++;
+    }
+  }
+}
 let invButton = {
   x: 20,
   y: 0, // we’ll set this dynamically
@@ -9,22 +25,26 @@ let invButton = {
   h: 60
 };
  function fillRect(x1, y1, x2, y2, value = 1) {
-   let startX = Math.min(x1, x2);
-   let endX = Math.max(x1, x2);
-   let startY = Math.min(y1, y2);
-   let endY = Math.max(y1, y2);
- 
-   let count = 0;
- 
-   for (let x = startX; x <= endX; x++) {
-     for (let y = startY; y <= endY; y++) {
-       maps[currentMap].tiles[`${x},${y}`] = value;
-       count++;
-     }
-   }
- 
-   console.log(`Filled ${count} tiles`);
- }
+  let startX = Math.min(x1, x2);
+  let endX = Math.max(x1, x2);
+  let startY = Math.min(y1, y2);
+  let endY = Math.max(y1, y2);
+
+  let count = 0;
+
+  let map = maps?.[currentMap];
+  if (!map) return;
+  if (!map.tiles) map.tiles = {};
+
+  for (let x = startX; x <= endX; x++) {
+    for (let y = startY; y <= endY; y++) {
+      map.tiles[`${x},${y}`] = value;
+      count++;
+    }
+  }
+
+  console.log(`Filled ${count} tiles`);
+}
 let inventory = [
   { type: "basic" },
   { type: "rose" },
@@ -70,6 +90,9 @@ canvas.addEventListener("mouseup", e => {
         inventory.push(s.petal);
         s.petal = dragging;
       }
+
+      rebuildPetals(); // ✅ THIS LINE IS THE IMPORTANT PART
+
       dragging = null;
       return;
     }
@@ -226,16 +249,11 @@ if (
 } else {
   player.vy = 0;
 }
-petals = [];
-
-for (let s of slots) {
-  if (s.petal) {
-    petals.push({
-      type: s.petal.type,
-      angle: 0,
-      dist: 60
-    });
-  }
+for (let p of petals) {
+  p.angle += 0.05;
+}
+for (let p of petals) {
+  p.angle += 0.05;
 }
 }
 
@@ -412,3 +430,4 @@ function gameLoop() {
 }
 
 gameLoop(); 
+
