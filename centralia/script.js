@@ -6,6 +6,9 @@ let dragging = null;
 let petals = [];
 let mobs = [];
 let spawnTimer = 0;
+let tx, ty;
+let tries = 0;
+let valid = false;
 let maxMobs = 50;
 let playerHitCooldown = 0;
 let player = {
@@ -226,8 +229,24 @@ function getMapBounds() {
     maxY: Math.max(...ys)
   };
 }
+function isMobColliding(x, y) {
+  for (let m of mobs) {
+    let dx = x - m.x;
+    let dy = y - m.y;
+    let dist = Math.hypot(dx, dy);
 
+    // ignore tiny distances (prevents bugs)
+    if (dist < 0.1) continue;
+
+    if (dist < playerRadius + m.r) {
+      return true;
+    }
+  }
+  return false;
+}
 function update() {
+  spawnTimer++;
+  let bounds = getMapBounds();
     let worldMouseX = mouse.x - (canvas.width / 2 - player.x);
 let worldMouseY = mouse.y - (canvas.height / 2 - player.y);
   let accel = 0.5;
@@ -254,26 +273,29 @@ let nextX = player.x + player.vx;
 let nextY = player.y + player.vy;
 
 // X movement
-if (!isColliding(nextX, player.y)) {
+if (!isColliding(nextX, player.y) && !isMobColliding(nextX, player.y)) {
   player.x = nextX;
 } else {
   player.vx = 0;
 }
 
 // Y movement
-if (!isColliding(player.x, nextY)) {
+if (!isColliding(player.x, nextY) && !isMobColliding(player.x, nextY)) {
   player.y = nextY;
 } else {
   player.vy = 0;
 }
-let bounds = getMapBounds();
-spawnTimer++;
-
+for (let m of mobs) {
+  if (m.hitCooldown > 0) {
+    m.hitCooldown--;
+  }
+}
 if (
   mobs.length < maxMobs &&
   spawnTimer >= getSpawnRate() &&
   Math.random() < 0.8
 ) {
+
   spawnTimer = 0;
 
   let tx, ty;
@@ -315,14 +337,34 @@ for (let m of mobs) {
   let dy = player.y - m.y;
   let dist = Math.hypot(dx, dy);
 
-  if (dist < m.r + 20 && playerHitCooldown === 0) {
-    player.hp -= m.damage;
-    playerHitCooldown = 30;
+  if (dist < m.r + playerRadius) {
+
+    // mob damages player
+    if (playerHitCooldown === 0) {
+      player.hp -= m.damage;
+      playerHitCooldown = 30;
+    }
+
+    // 👇 player damages mob
+    if (!m.hitCooldown) m.hitCooldown = 0;
+
+    if (m.hitCooldown === 0) {
+      m.hp -= 10; // body damage amount (tweak this)
+      m.hitCooldown = 15;
+      console.log("hit,mob, hp now:", m.hp);
+    }
   }
 }
 for (let p of petals) {
   p.angle += 0.05;
 }
+mobs = mobs.filter(m => {
+  if (m.hp <= 0) {
+    console.log("mob died");
+    return false;
+  }
+  return true;
+});
 }
 function draw() {
     invButton.y = canvas.height - invButton.h - 20;
