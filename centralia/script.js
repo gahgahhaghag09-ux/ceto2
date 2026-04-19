@@ -11,6 +11,8 @@ let activePetals = [];
 let drops = [];
 let spawnTimer = 0;
 let tx, ty;
+let inputVx = 0;
+let inputVy = 0;
 let tries = 0;
 let valid = false;
 let playerHitCooldown = 0;
@@ -301,40 +303,55 @@ let dy = worldMouseY - player.y;
 
 let dist = Math.hypot(dx, dy);
 
-let maxSpeed = 4.5;
+let maxSpeed = 2;
 let slowRadius = 150;
 
-let speed = Math.min(dist / slowRadius, 1) * maxSpeed;
+// 🎮 input strength based on distance (NOT velocity)
+let inputSpeed = Math.min(dist / slowRadius, 1) * maxSpeed;
+
 if (dist > 0) {
-  player.vx = (dx / dist) * speed;
-  player.vy = (dy / dist) * speed;
+  inputVx = (dx / dist) * inputSpeed;
+  inputVy = (dy / dist) * inputSpeed;
 } else {
-  player.vx = 0;
-  player.vy = 0;
+  inputVx = 0;
+  inputVy = 0;
 }
+
+// ➕ ADD input to velocity (keeps knockback working)
+player.vx += inputVx;
+player.vy += inputVy;
+
+// 🧱 clamp final velocity
+let speed = Math.hypot(player.vx, player.vy);
+if (speed > maxSpeed) {
+  player.vx = (player.vx / speed) * maxSpeed;
+  player.vy = (player.vy / speed) * maxSpeed;
+}
+
+player.vx += inputVx;
+player.vy += inputVy;
 let maxV = 1;
 let nextX = player.x + player.vx;
 let nextY = player.y + player.vy;
 
 // X movement
-if (
-  !isColliding(nextX, player.y) &&
-  !isMobBlocking(nextX, player.y)
-) {
+if (!isColliding(nextX, player.y)) {
   player.x = nextX;
 } else {
   player.vx = 0;
 }
 
 // Y movement
-if (
-  !isColliding(player.x, nextY) &&
-  !isMobBlocking(player.x, nextY)
-) {
+if (!isColliding(player.x, nextY)) {
   player.y = nextY;
 } else {
   player.vy = 0;
 }
+
+// friction (VERY IMPORTANT)
+player.vx *= 0.85;
+player.vy *= 0.85;
+
 for (let m of mobs) {
   if (m.hitCooldown > 0) {
     m.hitCooldown--;
@@ -496,45 +513,40 @@ let dist = Math.hypot(dx, dy);
 
 let hitRange = m.r + playerRadius;
 
-// normalize safely
-let nx = dx / (dist || 1);
-let ny = dy / (dist || 1);
-
 if (dist < hitRange) {
 
-  // 🔥 always resolve overlap (prevents flicker misses)
-  let penetration = hitRange - dist;
+  let nx = dx / (dist || 1);
+  let ny = dy / (dist || 1);
 
-  player.x += nx * penetration;
-  player.y += ny * penetration;
+  // always resolve overlap (prevents sticking)
+  let overlap = hitRange - dist;
 
-  m.x -= nx * penetration;
-  m.y -= ny * penetration;
+  player.x += nx * overlap * 0.5;
+  player.y += ny * overlap * 0.5;
 
-  // 🔥 ALWAYS apply knockback feel
-  let push = 2; // <- this is your “+2 idea”, but correctly used
+  m.x -= nx * overlap * 0.5;
+  m.y -= ny * overlap * 0.5;
 
-  player.x += nx * push;
-  player.y += ny * push;
-
-  m.x -= nx * push;
-  m.y -= ny * push;
-
-  // 🔥 DAMAGE: DO NOT depend on motion direction
+  // ONLY one real condition: hit cooldown
   if (playerHitCooldown <= 0 && m.hitCooldown <= 0) {
 
+    // 🔥 DAMAGE FIRST (your idea, but correctly used)
+    player.hp -= m.dmg;
+    m.hp -= 10;
+
+    // 🔥 THEN knockback (same event, not separate logic)
     let speed = Math.hypot(player.vx, player.vy);
 
     let strength = 6 + speed * 1.2;
 
-    player.x += nx * strength;
-    player.y += ny * strength;
+   let kb = strength * 0.8;
 
-    m.x -= nx * strength * 0.8;
-    m.y -= ny * strength * 0.8;
+// push into velocity instead of position
+player.vx += nx * kb;
+player.vy += ny * kb;
 
-    player.hp -= m.dmg;
-    m.hp -= 10;
+m.vx -= nx * kb * 0.8;
+m.vy -= ny * kb * 0.8;
 
     playerHitCooldown = 10;
     m.hitCooldown = 10;
@@ -767,10 +779,6 @@ function gameLoop() {
   update();
   draw();
   requestAnimationFrame(gameLoop);
-}
-
-gameLoop(); 
-
 }
 
 gameLoop(); 
