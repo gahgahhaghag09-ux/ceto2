@@ -1,16 +1,33 @@
-import { petalTypes } from "./petalData.js";
+import { petals as petalData } from "./petalData.js";
 import { mobTypes } from "./mobs.js";
 import { maps } from "./maps.js";
 let currentMap = "main";
+for (let f of maps.main.fills) {
+  fillRect(f[0], f[1], f[2], f[3], f[4]);
+}
 let dragging = null;
-let petals = [];
 let mobs = [];
+let activePetals = [];
+let drops = [];
 let spawnTimer = 0;
 let tx, ty;
 let tries = 0;
 let valid = false;
-let maxMobs = 50;
 let playerHitCooldown = 0;
+let rarityHpMultiplier = {
+  common: 1,
+  unusual: 3,
+  rare: 9,
+  epic: 27,
+  legendary: 81,
+  mythic: 243
+};
+let cachedBounds = {
+  minX: 0,
+  maxX: 0,
+  minY: 0,
+  maxY: 0
+};
 let player = {
   x: 400,
   y: 300,
@@ -19,26 +36,58 @@ let player = {
   hp: 200
 };
 let playerRadius = 18;
-function getSpawnRate() {
-  let base = 40;     // fastest spawn (~0.6s)
-  let growth = 3;    // how quickly it slows down
+function updateBounds() {
+  const tiles = maps?.[currentMap]?.tiles;
+  if (!tiles) return;
 
-  return base + mobs.length * growth;
+  let xs = [];
+  let ys = [];
+
+  for (let key in tiles) {
+    let [x, y] = key.split(",").map(Number);
+    xs.push(x);
+    ys.push(y);
+  }
+
+  cachedBounds.minX = Math.min(...xs);
+  cachedBounds.maxX = Math.max(...xs);
+  cachedBounds.minY = Math.min(...ys);
+  cachedBounds.maxY = Math.max(...ys);
+}
+function getSpawnRate() {
+  let s = maps[currentMap]?.spawn ?? {
+    baseSpawnRate: 40,
+    spawnVariance: 3
+  };
+
+  return s.baseSpawnRate + mobs.length * s.spawnVariance;
 }
 function rebuildPetals() {
-  petals = [];
+  activePetals = [];
 
   let i = 0;
   for (let s of slots) {
     if (s.petal) {
-      petals.push({
+      activePetals.push({
         type: s.petal.type,
-        angle: (i / maxEquip) * Math.PI * 2, // spread evenly
+        angle: (i / maxEquip) * Math.PI * 2,
         dist: 60
       });
       i++;
     }
   }
+}
+function isMobBlocking(x, y) {
+  for (let m of mobs) {
+    let dx = x - m.x;
+    let dy = y - m.y;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist < playerRadius + m.r) {
+      return true;
+    }
+  }
+  return false;
 }
 let invButton = {
   x: 20,
@@ -157,11 +206,6 @@ canvas.addEventListener("mousemove", e => {
   mouseY = mouse.y;
 });
 
-fillRect(7,9,11,11); fillRect(9,8,11,7); fillRect(14,14,14,1); fillRect(14,-14,14,-1);
-fillRect(-7,9,-11,11); fillRect(-9,8,-11,7); fillRect(-14,-14,-1,-14); fillRect(14,-14,1,-14);
-fillRect(7,-9,11,-11); fillRect(9,-8,11,-7); fillRect(-14,-14,-14,-1); fillRect(-14,14,-14,1);
-fillRect(-7,-9,-11,-11); fillRect(-9,-8,-11,-7); fillRect(14,14,1,14); fillRect(-14,14,-1,14);
-fillRect(15,15,15,-15); fillRect(-15,-15,15,-15); fillRect(-15,-15,-15,15); fillRect(-15,15,15,15);
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
@@ -245,8 +289,8 @@ function isMobColliding(x, y) {
   return false;
 }
 function update() {
+  updateBounds();
   spawnTimer++;
-  let bounds = getMapBounds();
     let worldMouseX = mouse.x - (canvas.width / 2 - player.x);
 let worldMouseY = mouse.y - (canvas.height / 2 - player.y);
   let accel = 0.5;
@@ -257,7 +301,7 @@ let dy = worldMouseY - player.y;
 
 let dist = Math.hypot(dx, dy);
 
-let maxSpeed = 4;
+let maxSpeed = 4.5;
 let slowRadius = 150;
 
 let speed = Math.min(dist / slowRadius, 1) * maxSpeed;
@@ -273,14 +317,20 @@ let nextX = player.x + player.vx;
 let nextY = player.y + player.vy;
 
 // X movement
-if (!isColliding(nextX, player.y) && !isMobColliding(nextX, player.y)) {
+if (
+  !isColliding(nextX, player.y) &&
+  !isMobBlocking(nextX, player.y)
+) {
   player.x = nextX;
 } else {
   player.vx = 0;
 }
 
 // Y movement
-if (!isColliding(player.x, nextY) && !isMobColliding(player.x, nextY)) {
+if (
+  !isColliding(player.x, nextY) &&
+  !isMobBlocking(player.x, nextY)
+) {
   player.y = nextY;
 } else {
   player.vy = 0;
@@ -291,9 +341,9 @@ for (let m of mobs) {
   }
 }
 if (
-  mobs.length < maxMobs &&
+  mobs.length < (maps[currentMap].spawn?.maxMobs ?? 50) &&
   spawnTimer >= getSpawnRate() &&
-  Math.random() < 0.8
+  Math.random() < (maps[currentMap]?.spawn?.spawnChance ?? 0.8)
 ) {
 
   spawnTimer = 0;
@@ -303,9 +353,9 @@ if (
   let valid = false;
 
   while (tries < 20) {
-    tx = Math.floor(Math.random() * (bounds.maxX - bounds.minX + 1)) + bounds.minX;
-    ty = Math.floor(Math.random() * (bounds.maxY - bounds.minY + 1)) + bounds.minY;
-
+  tx = Math.floor(Math.random() * (cachedBounds.maxX - cachedBounds.minX + 1)) + cachedBounds.minX;
+  ty = Math.floor(Math.random() * (cachedBounds.maxY - cachedBounds.minY + 1)) + cachedBounds.minY;
+   
     if (maps[currentMap]?.tiles?.[`${tx},${ty}`] !== 1) {
       valid = true;
       break;
@@ -316,117 +366,278 @@ if (
 
   if (!valid) return;
 
-  let stats = mobTypes["babyAnt"];
+   let spawnList = maps[currentMap]?.spawnList;
 
-  mobs.push({
-    type: "babyAnt",
-    x: tx * tileSize + tileSize / 2,
-    y: ty * tileSize + tileSize / 2,
-    vx: 0,
-    vy: 0,
-    hp: stats.hp,
-    damage: stats.damage,
-    speed: stats.speed,
-    r: stats.r
-  });
+   // ===== RARITY PICK =====
+let rarityList = maps[currentMap].rarities;
+
+let totalR = 0;
+for (let r of rarityList) totalR += r.weight;
+
+let rr = Math.random() * totalR;
+
+let rarity = "common";
+
+for (let r of rarityList) {
+  rr -= r.weight;
+  if (rr <= 0) {
+    rarity = r.rarity;
+    break;
+  }
+}
+if (!Array.isArray(spawnList) || spawnList.length === 0) {
+  console.error("Invalid spawnList in map:", currentMap);
+  return;
+}
+
+// total weight
+let total = 0;
+for (let s of spawnList) total += s.weight;
+
+// pick random
+let rand = Math.random() * total;
+
+let chosen = spawnList[spawnList.length - 1].type; // fallback safety
+
+for (let s of spawnList) {
+  rand -= s.weight;
+  if (rand <= 0) {
+    chosen = s.type;
+    break;
+  }
+}
+
+let stats = mobTypes[chosen];
+
+if (!stats) {
+  console.error("Missing mob type:", chosen);
+  return;
+}
+let typeData = mobTypes[chosen];
+
+let rarityRadiusMultiplier = 1;
+
+if (rarity === "unusual") rarityRadiusMultiplier = 1.1;
+else if (rarity === "rare") rarityRadiusMultiplier = 1.3;
+else if (rarity === "epic") rarityRadiusMultiplier = 1.6;
+else if (rarity === "legendary") rarityRadiusMultiplier = 3;
+else if (rarity === "mythic") rarityRadiusMultiplier = 5;
+
+let finalR = typeData.r * rarityRadiusMultiplier;
+
+ mobs.push({
+  hitCooldown: 0,
+  type: chosen,
+  rarity: rarity,
+  x: tx * tileSize + tileSize / 2,
+  y: ty * tileSize + tileSize / 2,
+  vx: 0,
+  vy: 0,
+ hp: stats.hp * (rarityHpMultiplier[rarity] ?? 1),
+  dmg: stats.dmg,
+  speed: stats.speed,
+  r: finalR,
+
+  //  AI 
+  state: "idle",
+  idleTime: typeData.idleTime,
+  moveTime: typeData.moveTime,
+  dir: Math.random() * Math.PI * 2
+});
 }
 if (playerHitCooldown > 0) playerHitCooldown--;
 
 for (let m of mobs) {
-  let dx = player.x - m.x;
-  let dy = player.y - m.y;
-  let dist = Math.hypot(dx, dy);
 
-  if (dist < m.r + playerRadius) {
+  // 1. AI 
+  let typeData = mobTypes[m.type];
 
-    // mob damages player
-    if (playerHitCooldown === 0) {
-      player.hp -= m.damage;
-      playerHitCooldown = 30;
+if (typeData.ai === "passive") {
+
+    if (m.state === "idle") {
+      m.idleTime--;
+
+      if (m.idleTime <= 0) {
+        m.state = "move";
+        m.moveTime = 60;
+        m.dir = Math.random() * Math.PI * 2;
+      }
+
+      m.vx = 0;
+      m.vy = 0;
     }
 
-    // 👇 player damages mob
-    if (!m.hitCooldown) m.hitCooldown = 0;
+    else if (m.state === "move") {
+      m.moveTime--;
 
-    if (m.hitCooldown === 0) {
-      m.hp -= 10; // body damage amount (tweak this)
-      m.hitCooldown = 15;
-      console.log("hit,mob, hp now:", m.hp);
+      m.vx = Math.cos(m.dir) * m.speed;
+      m.vy = Math.sin(m.dir) * m.speed;
+
+      let nextX = m.x + m.vx;
+      let nextY = m.y + m.vy;
+
+      if (!isWall(nextX, m.y)) m.x = nextX;
+      else m.dir = Math.random() * Math.PI * 2;
+
+      if (!isWall(m.x, nextY)) m.y = nextY;
+      else m.dir = Math.random() * Math.PI * 2;
+
+      if (m.moveTime <= 0) {
+        m.state = "idle";
+        m.idleTime = 100;
+      }
     }
   }
+
+  // 2. DAMAGE 
+let dx = player.x - m.x;
+let dy = player.y - m.y;
+let dist = Math.hypot(dx, dy);
+
+let hitRange = m.r + playerRadius;
+
+// normalize safely
+let nx = dx / (dist || 1);
+let ny = dy / (dist || 1);
+
+if (dist < hitRange) {
+
+  // 🔥 always resolve overlap (prevents flicker misses)
+  let penetration = hitRange - dist;
+
+  player.x += nx * penetration;
+  player.y += ny * penetration;
+
+  m.x -= nx * penetration;
+  m.y -= ny * penetration;
+
+  // 🔥 ALWAYS apply knockback feel
+  let push = 2; // <- this is your “+2 idea”, but correctly used
+
+  player.x += nx * push;
+  player.y += ny * push;
+
+  m.x -= nx * push;
+  m.y -= ny * push;
+
+  // 🔥 DAMAGE: DO NOT depend on motion direction
+  if (playerHitCooldown <= 0 && m.hitCooldown <= 0) {
+
+    let speed = Math.hypot(player.vx, player.vy);
+
+    let strength = 6 + speed * 1.2;
+
+    player.x += nx * strength;
+    player.y += ny * strength;
+
+    m.x -= nx * strength * 0.8;
+    m.y -= ny * strength * 0.8;
+
+    player.hp -= m.dmg;
+    m.hp -= 10;
+
+    playerHitCooldown = 10;
+    m.hitCooldown = 10;
+
+    console.log("HIT:", m.type);
+  }
 }
-for (let p of petals) {
+}
+for (let p of activePetals) {
   p.angle += 0.05;
 }
 mobs = mobs.filter(m => {
   if (m.hp <= 0) {
     console.log("mob died");
+
+    drops.push({
+      x: m.x,
+      y: m.y,
+      type: "leaf",
+      rarity: "common"
+    });
+
     return false;
   }
   return true;
 });
 }
 function draw() {
-    invButton.y = canvas.height - invButton.h - 20;
-  ctx.fillStyle = "#050505";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+invButton.y = canvas.height - invButton.h - 20;
+ctx.fillStyle = "#050505";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  let camX = canvas.width / 2 - player.x;
-  let camY = canvas.height / 2 - player.y;
+let camX = canvas.width / 2 - player.x;
+let camY = canvas.height / 2 - player.y;
 
-  ctx.save();
-  ctx.translate(camX, camY);
+// =====================
+// WORLD (CAMERA SPACE)
+// =====================
+ctx.save();
+ctx.translate(camX, camY);
 
- let tiles = maps?.[currentMap]?.tiles || {};
+let tiles = maps?.[currentMap]?.tiles || {};
 
-for (let key in tiles) {
-  let [x, y] = key.split(",").map(Number);
+// tiles
+let minX = Math.floor((player.x / tileSize) - 15);
+let maxX = Math.floor((player.x / tileSize) + 15);
+let minY = Math.floor((player.y / tileSize) - 15);
+let maxY = Math.floor((player.y / tileSize) + 15);
 
-  if (tiles[key] === 1) {
-    ctx.fillStyle = "#444";
-
-    ctx.fillRect(
-      x * tileSize,
-      y * tileSize,
-      tileSize,
-      tileSize
-    );
+for (let x = minX; x <= maxX; x++) {
+  for (let y = minY; y <= maxY; y++) {
+    let key = `${x},${y}`;
+    if (tiles[key] === 1) {
+      ctx.fillStyle = "#444";
+      ctx.fillRect(
+        x * tileSize,
+        y * tileSize,
+        tileSize,
+        tileSize
+      );
+    }
   }
 }
-for (let m of mobs) {
-  if (m.type === "babyAnt") {
-    ctx.fillStyle = "grey"; // brown
-  }
 
+// mobs (IMPORTANT: still inside camera)
+for (let m of mobs) {
+  ctx.fillStyle = mobTypes[m.type].color;
   ctx.beginPath();
   ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
   ctx.fill();
 }
-  // player
+for (let d of drops) {
+  if (d.rarity === "common") ctx.fillStyle = "#7eef6d";
+  else if (d.rarity === "unusual") ctx.fillStyle = "#ffe65d";
+  else if (d.rarity === "rare") ctx.fillStyle = "#4d52e3";
+  else if (d.rarity === "epic") ctx.fillStyle = "#861fde";
+  else if (d.rarity === "legendary") ctx.fillStyle = "#de1f1f";
+  else if (d.rarity === "mythic") ctx.fillStyle = "#1fdbde";
+  else if (d.rarity === "ultra") ctx.fillStyle = "#ff2b75"
+  
+  ctx.beginPath();
+  ctx.arc(d.x, d.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+}
+// player (WORLD)
 let r = 20;
-
 ctx.fillStyle = "#cfbb50";
 ctx.beginPath();
 ctx.arc(player.x, player.y, r + 3, 0, Math.PI * 2);
 ctx.fill();
 
-// yellow/white flower inside
 ctx.fillStyle = "#ffe763";
 ctx.beginPath();
 ctx.arc(player.x, player.y, r, 0, Math.PI * 2);
 ctx.fill();
 
-  ctx.restore();
-let bounds = getMapBounds();
-let offsetX = bounds.minX * tileSize;
-let offsetY = bounds.minY * tileSize;
+ctx.restore(); // ONLY ONCE
 
-let radius = 40;
-
-  // MINIMAP 
-let mapWidth = (bounds.maxX - bounds.minX + 1) * tileSize;
-let mapHeight = (bounds.maxY - bounds.minY + 1) * tileSize;
-
+let offsetX = cachedBounds.minX * tileSize;
+let offsetY = cachedBounds.minY * tileSize;
+let radius = 20;
+let mapWidth = (cachedBounds.maxX - cachedBounds.minX + 1) * tileSize;
+let mapHeight = (cachedBounds.maxY - cachedBounds.minY + 1) * tileSize;
 // fit inside minimap box
 let mapScale = Math.min(
   mapSize / mapWidth,
@@ -488,11 +699,6 @@ if (inventoryOpen) {
 
     let type = inventory[i].type;
 
-    // draw petal ONLY inside inventory
-    if (type === "basic") ctx.fillStyle = "#ffffff";
-    if (type === "rose") ctx.fillStyle = "#ff4d6d";
-    if (type === "rice") ctx.fillStyle = "#f5f5f5";
-
     ctx.beginPath();
     ctx.arc(x + 25, y + 25, 10, 0, Math.PI * 2);
     ctx.fill();
@@ -540,11 +746,31 @@ for (let i = 0; i < inventory.length; i++) {
   ctx.fillStyle = "white";
   ctx.fillText(inventory[i].type, x + 5, y + 30);
 }
+for (let i = drops.length - 1; i >= 0; i--) {
+  let d = drops[i];
+
+  let dx = player.x - d.x;
+  let dy = player.y - d.y;
+  let dist = Math.hypot(dx, dy);
+
+  if (dist < 25) {
+    inventory.push({
+      type: d.type,
+      rarity: d.rarity
+    });
+
+    drops.splice(i, 1);
+  }
+}
 }
 function gameLoop() {
   update();
   draw();
   requestAnimationFrame(gameLoop);
+}
+
+gameLoop(); 
+
 }
 
 gameLoop(); 
